@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a7a3c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SAFLEN">
+  <meta name="description" content="自転車ルートの安全度を色で可視化するナビアプリ">
+  <title>SAFLEN — 自転車安全ナビ</title>
+  <link rel="manifest" href="manifest.json">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    :root{
+      --green:#1a7a3c;--green-l:#2ecc71;--green-d:#0d5c2e;
+      --yellow:#f39c12;--red:#e74c3c;--red-d:#c0392b;--blue:#2980b9;
+      --bg:#f5f5f5;--white:#fff;
+      --gray1:#f8f9fa;--gray2:#e9ecef;--gray3:#adb5bd;--dark:#212529;
+      --shadow:0 2px 12px rgba(0,0,0,.12);--panel-w:380px;
+    }
+    html{height:100%;}
+    body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--dark);height:100dvh;overflow:hidden;}
+
+    /* ===== SPLASH ===== */
+    #splash{
+      position:fixed;inset:0;z-index:9999;
+      background:linear-gradient(145deg,var(--green-d),var(--green),var(--green-l));
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      transition:opacity .5s,transform .5s;
+    }
+    #splash.hide{opacity:0;pointer-events:none;transform:scale(1.04);}
+    .splash-icon{width:110px;height:110px;margin-bottom:24px;filter:drop-shadow(0 8px 24px rgba(0,0,0,.3));animation:splashPop .6s cubic-bezier(.34,1.56,.64,1) forwards;}
+    @keyframes splashPop{from{transform:scale(.6);opacity:0;}to{transform:scale(1);opacity:1;}}
+    .splash-name{font-size:34px;font-weight:900;color:#fff;letter-spacing:.25em;animation:splashFade .6s .2s ease forwards;opacity:0;}
+    .splash-sub{font-size:12px;color:rgba(255,255,255,.6);letter-spacing:.15em;margin-top:6px;animation:splashFade .6s .4s ease forwards;opacity:0;}
+    @keyframes splashFade{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    .splash-dots{position:absolute;bottom:52px;display:flex;gap:6px;}
+    .splash-dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.4);animation:dotPulse 1.2s infinite;}
+    .splash-dot:nth-child(2){animation-delay:.2s;}.splash-dot:nth-child(3){animation-delay:.4s;}
+    @keyframes dotPulse{0%,100%{background:rgba(255,255,255,.4);transform:scale(1);}50%{background:rgba(255,255,255,.9);transform:scale(1.3);}}
+
+    /* ===== PC SHELL ===== */
+    .app-shell{display:none;height:100dvh;width:100%;}
+    @media(min-width:768px){
+      .app-shell{display:flex;}
+      .mobile-root{display:none!important;}
+    }
+    .pc-panel{width:var(--panel-w);min-width:var(--panel-w);height:100%;background:var(--white);display:flex;flex-direction:column;box-shadow:2px 0 16px rgba(0,0,0,.1);z-index:10;overflow:hidden;}
+    .pc-header{background:var(--green);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+    .pc-logo{font-size:18px;font-weight:900;letter-spacing:.08em;}
+    .pc-logo span{font-size:11px;font-weight:400;opacity:.75;display:block;}
+    .pc-tabnav{display:flex;border-bottom:1px solid var(--gray2);background:var(--white);flex-shrink:0;}
+    .pc-tab{flex:1;padding:10px 4px;font-size:11px;font-weight:700;text-align:center;cursor:pointer;color:var(--gray3);border-bottom:2px solid transparent;transition:color .15s,border-color .15s;}
+    .pc-tab.active{color:var(--green);border-bottom-color:var(--green);}
+    .pc-sub{display:none;flex-direction:column;flex:1;overflow:hidden;}
+    .pc-sub.active{display:flex;}
+    .pc-map{flex:1;position:relative;overflow:hidden;}
+
+    /* ===== MOBILE SCREENS ===== */
+    .mobile-root{position:absolute;inset:0;}
+    .screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;transform:translateX(30px);}
+    .screen.active{opacity:1;pointer-events:all;transform:translateX(0);}
+
+    /* ===== SHARED COMPONENTS ===== */
+    /* Search bar */
+    .search-bar{background:var(--white);padding:10px 14px 6px;box-shadow:var(--shadow);z-index:10;position:relative;flex-shrink:0;}
+    .search-2row{display:flex;gap:8px;align-items:stretch;}
+    .search-inputs{flex:1;display:flex;flex-direction:column;gap:4px;}
+    .search-row{display:flex;align-items:center;gap:9px;background:var(--gray1);border-radius:10px;padding:8px 11px;cursor:pointer;transition:background .15s;}
+    .search-row:hover{background:var(--gray2);}
+    .s-icon{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+    .s-blue{background:var(--blue);color:#fff;}.s-red{background:var(--red);color:#fff;}
+    .s-text{font-size:13px;color:var(--dark);font-weight:500;}
+    .s-placeholder{font-size:13px;color:var(--gray3);}
+    .swap-btn{width:34px;height:34px;border-radius:50%;background:var(--white);border:1px solid var(--gray2);display:flex;align-items:center;justify-content:center;font-size:14px;align-self:center;flex-shrink:0;cursor:pointer;transition:background .15s;}
+    .swap-btn:hover{background:var(--gray1);}
+
+    /* Filter chips */
+    .filter-bar{background:var(--white);padding:5px 14px 9px;display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;}
+    .filter-bar::-webkit-scrollbar{display:none;}
+    .chip{display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;transition:all .15s;flex-shrink:0;}
+    .chip-on{background:var(--green);color:#fff;border:1.5px solid var(--green);}
+    .chip-off{background:var(--white);color:var(--green);border:1.5px solid var(--green);}
+    .chip:active{transform:scale(.96);}
+
+    /* Map */
+    .map-area{flex:1;position:relative;overflow:hidden;background:#e8ece4;}
+    .leaflet-map{position:absolute;inset:0;width:100%;height:100%;z-index:0;}
+    .map-marker-icon{width:34px;height:34px;border-radius:50%;background:var(--white);box-shadow:0 2px 8px rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center;font-size:16px;}
+
+    /* Legend */
+    .legend{position:absolute;left:12px;bottom:12px;background:var(--white);border-radius:10px;box-shadow:var(--shadow);padding:9px 11px;font-size:11px;z-index:10;}
+    .legend-title{font-weight:700;margin-bottom:5px;font-size:10px;}
+    .legend-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;}
+    .legend-row:last-child{margin-bottom:0;}
+    .ldot{width:8px;height:8px;border-radius:50%;}
+
+    /* Bottom sheet */
+    .bottom-sheet{background:var(--white);border-radius:18px 18px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.12);padding:0 14px 18px;z-index:20;flex-shrink:0;}
+    @media(min-width:768px){.bottom-sheet{border-radius:0;box-shadow:none;border-top:1px solid var(--gray2);padding:14px 16px 18px;}}
+    .bs-handle{width:36px;height:4px;background:var(--gray2);border-radius:2px;margin:10px auto 12px;}
+    @media(min-width:768px){.bs-handle{display:none;}}
+    .bs-title{font-size:15px;font-weight:900;color:var(--green);margin-bottom:10px;}
+    .bs-title span{font-size:11px;font-weight:400;color:var(--gray3);margin-left:5px;}
+    .stats-row{display:flex;margin-bottom:10px;}
+    .stat{flex:1;text-align:center;padding:7px 4px;border-right:1px solid var(--gray2);}
+    .stat:last-child{border-right:none;}
+    .stat-lbl{font-size:9px;color:var(--gray3);font-weight:700;margin-bottom:2px;}
+    .stat-val{font-size:20px;font-weight:900;color:var(--dark);line-height:1.1;}
+    .stat-unit{font-size:10px;}
+    .stat-badge{display:inline-flex;align-items:center;gap:3px;background:rgba(26,122,60,.1);color:var(--green);border-radius:6px;padding:3px 8px;font-size:12px;font-weight:900;}
+    .warn-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:11px;}
+    .warn-chip{display:flex;align-items:center;gap:3px;font-size:10px;font-weight:700;background:var(--gray1);border-radius:6px;padding:4px 8px;color:var(--dark);}
+
+    /* Buttons */
+    .start-btn{width:100%;background:var(--green);color:#fff;border:none;border-radius:14px;padding:16px 14px;font-size:15px;font-weight:900;font-family:'Noto Sans JP',sans-serif;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;box-shadow:0 4px 14px rgba(26,122,60,.35);transition:transform .15s,opacity .15s;line-height:1.2;}
+    .start-btn:hover{opacity:.9;}.start-btn:active{transform:scale(.97);}
+    .start-btn-sub{font-size:10px;font-weight:400;opacity:.8;}
+    .end-btn{width:100%;background:var(--red-d);color:#fff;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:900;font-family:'Noto Sans JP',sans-serif;cursor:pointer;box-shadow:0 4px 12px rgba(192,57,43,.3);transition:opacity .15s;}
+    .end-btn:hover{opacity:.85;}
+
+    /* Nav header */
+    .nav-header{background:var(--green);padding:12px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+    .back-btn{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.15);border:none;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;cursor:pointer;flex-shrink:0;transition:background .15s;}
+    .back-btn:hover{background:rgba(255,255,255,.25);}
+    .nav-title{font-size:15px;font-weight:900;color:#fff;letter-spacing:.02em;}
+
+    /* Route cards */
+    .routes-list{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;scrollbar-width:thin;}
+    .route-card{background:var(--white);border-radius:12px;padding:13px;border:1.5px solid var(--gray2);cursor:pointer;transition:border-color .2s,transform .15s,box-shadow .15s;}
+    .route-card:hover{border-color:var(--green);box-shadow:0 2px 10px rgba(26,122,60,.1);}
+    .route-card.selected{border:3px solid var(--green);box-shadow:0 4px 16px rgba(26,122,60,.18);background:#f0fdf4;}
+    .route-card:active{transform:scale(.98);}
+    .route-card-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}
+    .route-name{font-size:14px;font-weight:900;color:var(--dark);}
+    .safety-badge{display:inline-flex;align-items:center;gap:3px;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;}
+    .sb-high{background:rgba(26,122,60,.1);color:var(--green);}
+    .sb-mid{background:rgba(243,156,18,.1);color:var(--yellow);}
+    .sb-low{background:rgba(231,76,60,.1);color:var(--red);}
+    .route-meta{display:flex;gap:12px;font-size:11px;color:var(--gray3);margin-bottom:6px;}
+    .route-meta strong{color:var(--dark);font-weight:700;}
+    .route-bar{height:5px;border-radius:3px;overflow:hidden;display:flex;margin-bottom:7px;}
+    .route-tags{display:flex;gap:5px;flex-wrap:wrap;}
+    .rtag{font-size:10px;background:var(--gray1);border-radius:5px;padding:2px 7px;color:var(--dark);}
+    .select-btn{background:var(--green);color:#fff;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:900;font-family:'Noto Sans JP',sans-serif;cursor:pointer;margin:0 12px 14px;box-shadow:0 4px 14px rgba(26,122,60,.3);transition:opacity .15s;}
+    .select-btn:hover{opacity:.9;}
+
+    /* Navi */
+    .navi-hdr{background:var(--green);padding:10px 14px;flex-shrink:0;}
+    .navi-dir{font-size:18px;font-weight:900;color:#fff;margin-bottom:1px;}
+    .navi-sub-txt{font-size:11px;color:rgba(255,255,255,.8);}
+    .navi-bottom{background:var(--white);padding:12px 14px 18px;box-shadow:0 -3px 16px rgba(0,0,0,.1);flex-shrink:0;}
+    .navi-stats{display:flex;margin-bottom:12px;}
+    .navi-stat{flex:1;text-align:center;padding:7px 4px;border-right:1px solid var(--gray2);}
+    .navi-stat:last-child{border-right:none;}
+    .navi-lbl{font-size:9px;color:var(--gray3);font-weight:700;margin-bottom:2px;}
+    .navi-val{font-size:20px;font-weight:900;color:var(--dark);line-height:1.1;}
+    .navi-unit{font-size:10px;}
+
+    /* Detail */
+    .detail-list{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:9px;}
+    .detail-item{background:var(--gray1);border-radius:12px;padding:12px;display:flex;align-items:center;gap:11px;}
+    .d-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
+    .di-red{background:rgba(231,76,60,.12);}
+    .di-yellow{background:rgba(243,156,18,.12);}
+    .di-blue{background:rgba(41,128,185,.12);}
+    .d-title{font-size:13px;font-weight:700;color:var(--dark);margin-bottom:2px;}
+    .d-sub{font-size:11px;color:var(--gray3);}
+
+    /* Input screen */
+    .input-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;}
+    .input-card{background:var(--white);border-radius:12px;padding:14px;box-shadow:var(--shadow);}
+    .input-label{font-size:10px;color:var(--gray3);font-weight:700;margin-bottom:8px;letter-spacing:.1em;text-transform:uppercase;}
+    .input-field{width:100%;border:1.5px solid var(--gray2);border-radius:8px;padding:10px 12px;font-size:14px;font-family:'Noto Sans JP',sans-serif;outline:none;transition:border-color .15s;}
+    .input-field:focus{border-color:var(--green);}
+    .history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--gray2);cursor:pointer;transition:background .15s;}
+    .history-item:last-child{border-bottom:none;padding-bottom:0;}
+    .history-icon{width:32px;height:32px;background:var(--gray1);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+    .history-name{font-size:13px;font-weight:700;color:var(--dark);}
+    .history-meta{font-size:10px;color:var(--gray3);}
+
+    /* PC input */
+    .pc-input-body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;}
+    .pc-card{background:var(--gray1);border-radius:12px;padding:14px;}
+    .pc-card-label{font-size:10px;color:var(--gray3);font-weight:700;margin-bottom:8px;letter-spacing:.1em;text-transform:uppercase;}
+
+    /* Leaflet fixes */
+    .leaflet-pane{z-index:1!important;}
+    .leaflet-control{z-index:5!important;}
+
+    /* Animation */
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+    .navi-dot{width:13px;height:13px;background:var(--blue);border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 4px rgba(41,128,185,.3);animation:pulse 2s infinite;position:absolute;transform:translate(-50%,-50%);}
+  </style>
+</head>
+<body>
+
+<!-- ===== SPLASH ===== -->
+<div id="splash">
+  <svg class="splash-icon" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#145c2d"/><stop offset="100%" stop-color="#27ae60"/></linearGradient></defs>
+    <rect width="120" height="120" rx="26" fill="url(#sg)"/>
+    <path d="M60 10 C48 10 38 20 38 32 C38 46 60 66 60 66 C60 66 82 46 82 32 C82 20 72 10 60 10Z" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M60 20 L68 24 L68 34 Q68 40 60 44 Q52 40 52 34 L52 24Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+    <polyline points="55,32 59,36 65,28" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="38" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="82" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/>
+    <line x1="38" y1="88" x2="55" y2="68" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="55" y1="68" x2="82" y2="88" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="55" y1="68" x2="68" y2="88" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="55" y1="68" x2="55" y2="60" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="50" y1="60" x2="62" y2="60" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="68" y1="88" x2="68" y2="72" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="62" y1="72" x2="76" y2="72" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  </svg>
+  <div class="splash-name">SAFLEN</div>
+  <div class="splash-sub">自転車安全ナビ</div>
+  <div class="splash-dots">
+    <div class="splash-dot"></div><div class="splash-dot"></div><div class="splash-dot"></div>
+  </div>
+</div>
+
+<!-- ===== PC LAYOUT ===== -->
+<div class="app-shell">
+
+  <!-- 左パネル -->
+  <div class="pc-panel">
+    <div class="pc-header">
+      <svg width="34" height="34" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="rgba(255,255,255,.2)"/><path d="M60 10 C48 10 38 20 38 32 C38 46 60 66 60 66 C60 66 82 46 82 32 C82 20 72 10 60 10Z" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/><path d="M60 20 L68 24 L68 34 Q68 40 60 44 Q52 40 52 34 L52 24Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><polyline points="55,32 59,36 65,28" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="38" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="82" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><line x1="38" y1="88" x2="55" y2="68" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="55" y1="68" x2="82" y2="88" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="55" y1="68" x2="68" y2="88" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="55" y1="68" x2="55" y2="60" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="50" y1="60" x2="62" y2="60" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="68" y1="88" x2="68" y2="72" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="62" y1="72" x2="76" y2="72" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+      <div><div class="pc-logo">SAFLEN<span>自転車安全ナビ</span></div></div>
+    </div>
+
+    <div class="pc-tabnav">
+      <div class="pc-tab active" onclick="pcTab('pc-home')">🗺️ 検索</div>
+      <div class="pc-tab" onclick="pcTab('pc-routes')">🔀 ルート</div>
+      <div class="pc-tab" onclick="pcTab('pc-navi')">📍 ナビ</div>
+      <div class="pc-tab" onclick="pcTab('pc-detail')">⚠️ 詳細</div>
+    </div>
+
+    <!-- PC: 検索 -->
+    <div class="pc-sub active" id="pc-home">
+      <div class="search-bar" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <div class="s-icon s-blue" style="flex-shrink:0;">🚲</div>
+          <input id="pc-input-start" class="input-field" type="text" placeholder="現在地（空欄でGPS使用）" style="flex:1;padding:7px 10px;font-size:13px;border-radius:8px;border:1.5px solid var(--gray2);">
+          <button onclick="useGPS('pc-input-start')" style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:var(--blue);border:none;color:#fff;font-size:12px;cursor:pointer;" title="GPS">📍</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="s-icon s-red" style="flex-shrink:0;">🏁</div>
+          <input id="pc-input-goal" class="input-field" type="text" placeholder="目的地を入力（例：柏駅）" style="flex:1;padding:7px 10px;font-size:13px;border-radius:8px;border:1.5px solid var(--gray2);">
+        </div>
+      </div>
+      <div class="filter-bar" style="padding-top:9px;">
+        <div class="chip chip-on" onclick="toggleChip(this)">🛡️ 自転車通行可 ▾</div>
+        <div class="chip chip-on" onclick="toggleChip(this)">🚲 安全度 ▾</div>
+        <div class="chip chip-off" onclick="toggleChip(this)">⛰️ 坂道 ▾</div>
+        <div class="chip chip-off" onclick="toggleChip(this)">🚗 交通量 ▾</div>
+      </div>
+      <div class="pc-input-body">
+        <div class="pc-card" style="background:rgba(26,122,60,.06);border:1px solid rgba(26,122,60,.2);">
+          <div style="font-size:12px;color:var(--green);font-weight:700;margin-bottom:4px;">💡 使い方</div>
+          <div style="font-size:11px;color:#555;line-height:1.8;">
+            ① 目的地を入力（例：柏駅、麗澤大学）<br>
+            ② 「ルートを検索」ボタンを押す<br>
+            ③ 地図にルートが表示される
+          </div>
+        </div>
+        <div class="pc-card">
+          <div class="pc-card-label">最近使ったルート</div>
+          <div class="history-item" onclick="document.getElementById('pc-input-goal').value='麗澤大学';"><div class="history-icon">🕐</div><div><div class="history-name">麗澤大学</div><div class="history-meta">タップして入力</div></div></div>
+          <div class="history-item" onclick="document.getElementById('pc-input-goal').value='柏駅';"><div class="history-icon">⭐</div><div><div class="history-name">柏駅</div><div class="history-meta">タップして入力</div></div></div>
+          <div class="history-item" onclick="document.getElementById('pc-input-goal').value='柏の葉キャンパス駅';"><div class="history-icon">🕐</div><div><div class="history-name">柏の葉キャンパス駅</div><div class="history-meta">タップして入力</div></div></div>
+        </div>
+      </div>
+      <div style="padding:12px 14px 16px;">
+        <button id="pc-search-btn" class="start-btn" onclick="searchRoute()"><span>🔍</span><div><div>ルートを検索</div><div class="start-btn-sub">目的地を入力して検索</div></div></button>
+      </div>
+    </div>
+
+    <!-- PC: ルート選択 -->
+    <div class="pc-sub" id="pc-routes">
+      <div class="nav-header">
+        <button class="back-btn" onclick="pcTab('pc-home')">←</button>
+        <span class="nav-title">ルートを選択</span>
+      </div>
+      <!-- PC用ルートプレビュー地図 -->
+      <div style="position:relative;height:200px;flex-shrink:0;border-bottom:1px solid var(--gray2);">
+        <div id="pc-route-preview-map" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;"></div>
+        <div class="legend" style="z-index:20;bottom:8px;left:8px;">
+          <div class="legend-title">安全度</div>
+          <div class="legend-row"><div class="ldot" style="background:#2ecc71;"></div><span>高</span></div>
+          <div class="legend-row"><div class="ldot" style="background:#f39c12;"></div><span>中</span></div>
+          <div class="legend-row"><div class="ldot" style="background:#e74c3c;"></div><span>低</span></div>
+        </div>
+        <div id="pc-route-selected-label" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--green);color:#fff;padding:4px 14px;border-radius:999px;font-size:11px;font-weight:700;z-index:20;white-space:nowrap;">ルート A（安全重視）</div>
+      </div>
+      <div class="routes-list">
+        <div class="route-card selected" onclick="selectRoutePC(this,'A')">
+          <div class="route-card-hd"><span class="route-name">ルート A（安全重視）</span><span class="safety-badge sb-high">🛡️ 高</span></div>
+          <div class="route-meta"><span><strong>5.2 km</strong></span><span><strong>約20分</strong></span><span>坂道なし</span></div>
+          <div class="route-bar"><div style="width:70%;background:#2ecc71;"></div><div style="width:20%;background:#f39c12;"></div><div style="width:10%;background:#e74c3c;"></div></div>
+          <div class="route-tags"><span class="rtag">🚲 自転車通行可</span><span class="rtag">📏 道幅広め</span><span class="rtag">⚠️ 注意1箇所</span></div>
+        </div>
+        <div class="route-card" onclick="selectRoutePC(this,'B')">
+          <div class="route-card-hd"><span class="route-name">ルート B（距離重視）</span><span class="safety-badge sb-mid">⚡ 中</span></div>
+          <div class="route-meta"><span><strong>3.8 km</strong></span><span><strong>約15分</strong></span><span>緩やかな坂あり</span></div>
+          <div class="route-bar"><div style="width:40%;background:#2ecc71;"></div><div style="width:20%;background:#f39c12;"></div><div style="width:15%;background:#e74c3c;"></div></div>
+          <div class="route-tags"><span class="rtag">🚗 交通量多い区間</span><span class="rtag">⚠️ 注意3箇所</span></div>
+        </div>
+        <div class="route-card" onclick="selectRoutePC(this,'C')">
+          <div class="route-card-hd"><span class="route-name">ルート C（最短）</span><span class="safety-badge sb-low">⚠️ 低</span></div>
+          <div class="route-meta"><span><strong>2.9 km</strong></span><span><strong>約11分</strong></span><span>急坂あり</span></div>
+          <div class="route-bar"><div style="width:20%;background:#2ecc71;"></div><div style="width:30%;background:#f39c12;"></div><div style="width:50%;background:#e74c3c;"></div></div>
+          <div class="route-tags"><span class="rtag">⛰️ 急坂あり</span><span class="rtag">🛣️ 路面荒れ</span><span class="rtag">⚠️ 危険5箇所</span></div>
+        </div>
+      </div>
+      <button class="select-btn" onclick="pcTab('pc-navi')">このルートで案内開始 →</button>
+    </div>
+
+    <!-- PC: ナビ -->
+    <div class="pc-sub" id="pc-navi">
+      <div class="navi-hdr">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="20" height="20" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="rgba(255,255,255,.2)"/><path d="M60 10 C48 10 38 20 38 32 C38 46 60 66 60 66 C60 66 82 46 82 32 C82 20 72 10 60 10Z" fill="none" stroke="#fff" stroke-width="3"/><circle cx="38" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="82" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><line x1="38" y1="88" x2="55" y2="68" stroke="#fff" stroke-width="2.5"/><line x1="55" y1="68" x2="82" y2="88" stroke="#fff" stroke-width="2.5"/></svg>
+          <div><div class="navi-dir">↗️ 200m先を右折</div><div class="navi-sub-txt">○○通り → △△交差点</div></div>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;">
+        <div style="background:var(--gray1);border-radius:12px;" class="stats-row" style="margin:0;">
+          <div class="navi-stat"><div class="navi-lbl">残り距離</div><div class="navi-val">3.8<span class="navi-unit">km</span></div></div>
+          <div class="navi-stat"><div class="navi-lbl">残り時間</div><div class="navi-val">15<span class="navi-unit">分</span></div></div>
+          <div class="navi-stat"><div class="navi-lbl">到着予想</div><div class="navi-val" style="font-size:16px;">14:32</div></div>
+        </div>
+        <div style="background:var(--gray1);border-radius:12px;padding:12px;">
+          <div style="font-size:11px;font-weight:700;color:var(--gray3);margin-bottom:9px;letter-spacing:.08em;">次の案内</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:10px;align-items:center;"><span style="font-size:20px;">↗️</span><div><div style="font-weight:700;font-size:13px;">200m先 右折</div><div style="font-size:11px;color:var(--gray3);">○○通り</div></div></div>
+            <div style="display:flex;gap:10px;align-items:center;"><span style="font-size:20px;">⬆️</span><div><div style="font-weight:700;font-size:13px;">500m 直進</div><div style="font-size:11px;color:var(--gray3);">△△通り</div></div></div>
+            <div style="display:flex;gap:10px;align-items:center;"><span style="font-size:20px;">↙️</span><div><div style="font-weight:700;font-size:13px;">300m先 左折</div><div style="font-size:11px;color:var(--gray3);">目的地付近</div></div></div>
+          </div>
+        </div>
+        <div class="warn-row"><div class="warn-chip">⚠️ この先 狭い道</div><div class="warn-chip">🚗 交通量注意</div></div>
+      </div>
+      <div style="padding:12px 14px 16px;"><button class="end-btn" onclick="pcTab('pc-home')">🏁 案内を終了</button></div>
+    </div>
+
+    <!-- PC: 詳細 -->
+    <div class="pc-sub" id="pc-detail">
+      <div class="nav-header">
+        <button class="back-btn" onclick="pcTab('pc-home')">←</button>
+        <span class="nav-title">道路詳細・危険情報</span>
+      </div>
+      <div class="detail-list">
+        <div class="detail-item"><div class="d-icon di-red">⚠️</div><div><div class="d-title">狭い道あり（道幅 1.5m）</div><div class="d-sub">○○通り 交差点付近 · 報告3件</div></div></div>
+        <div class="detail-item"><div class="d-icon di-yellow">🚧</div><div><div class="d-title">工事中（通行注意）</div><div class="d-sub">△△交差点 · 2025年7月まで</div></div></div>
+        <div class="detail-item"><div class="d-icon di-blue">🚶</div><div><div class="d-title">歩行者多い区間</div><div class="d-sub">駅前エリア · 8〜9時 / 17〜19時</div></div></div>
+        <div class="detail-item"><div class="d-icon di-red">⛰️</div><div><div class="d-title">急な上り坂（勾配 8%）</div><div class="d-sub">□□坂 · 約200m</div></div></div>
+        <div class="detail-item"><div class="d-icon di-yellow">🚗</div><div><div class="d-title">交通量が多い区間</div><div class="d-sub">幹線道路区間 · 朝夕ラッシュ時</div></div></div>
+        <div style="background:var(--gray1);border-radius:12px;padding:14px;">
+          <div style="font-size:13px;font-weight:700;margin-bottom:9px;">👥 ユーザー口コミ</div>
+          <div style="font-size:12px;color:var(--gray3);line-height:1.8;">「駅前の歩道が狭くて自転車が走りにくい」<br>「○○通りは朝の交通量が多くて怖い」<br>「裏道を使うと坂が少なくておすすめ」</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右マップ (PC) -->
+  <div class="pc-map">
+    <div id="pc-leaflet-map" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;"></div>
+    <div style="position:absolute;right:14px;top:14px;background:#fff;border-radius:10px;padding:9px 12px;box-shadow:var(--shadow);font-size:12px;z-index:20;">
+      <div style="font-weight:700;margin-bottom:5px;">安全度</div>
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;"><div style="width:9px;height:9px;border-radius:50%;background:#2ecc71;"></div>高</div>
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;"><div style="width:9px;height:9px;border-radius:50%;background:#f39c12;"></div>中</div>
+      <div style="display:flex;align-items:center;gap:5px;"><div style="width:9px;height:9px;border-radius:50%;background:#e74c3c;"></div>低</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MOBILE LAYOUT ===== -->
+<div class="mobile-root">
+
+  <!-- Screen: Map -->
+  <div class="screen active" id="screen-map" style="background:#e8ece4;">
+    <div class="search-bar">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+        <div class="s-icon s-blue" style="flex-shrink:0;">🚲</div>
+        <input id="input-start" class="input-field" type="text" placeholder="現在地（空欄でGPS使用）" style="flex:1;padding:7px 10px;font-size:13px;border-radius:8px;border:1.5px solid var(--gray2);" onfocus="goTo('screen-input')">
+        <button onclick="useGPS('input-start')" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--blue);border:none;color:#fff;font-size:14px;cursor:pointer;" title="GPS取得">📍</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="s-icon s-red" style="flex-shrink:0;">🏁</div>
+        <input id="input-goal" class="input-field" type="text" placeholder="目的地を入力（例：柏駅）" style="flex:1;padding:7px 10px;font-size:13px;border-radius:8px;border:1.5px solid var(--gray2);" onfocus="goTo('screen-input')">
+        <button id="search-btn" onclick="searchRoute()" style="flex-shrink:0;padding:7px 12px;border-radius:8px;background:var(--green);border:none;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">🔍 検索</button>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <div class="chip chip-on" onclick="toggleChip(this)">🛡️ 自転車通行可 ▾</div>
+      <div class="chip chip-on" onclick="toggleChip(this)">🚲 安全度 ▾</div>
+      <div class="chip chip-off" onclick="toggleChip(this)">⛰️ 坂道 ▾</div>
+      <div class="chip chip-off" onclick="toggleChip(this)">🚗 交通量 ▾</div>
+      <div class="chip chip-off" onclick="toggleChip(this)">その他 ▾</div>
+    </div>
+    <div class="map-area">
+      <div id="mobile-leaflet-map" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;"></div>
+      <div class="legend" style="z-index:20;">
+        <div class="legend-title">安全度</div>
+        <div class="legend-row"><div class="ldot" style="background:#2ecc71;"></div><span>高</span></div>
+        <div class="legend-row"><div class="ldot" style="background:#f39c12;"></div><span>中</span></div>
+        <div class="legend-row"><div class="ldot" style="background:#e74c3c;"></div><span>低</span></div>
+      </div>
+    </div>
+    <div class="bottom-sheet">
+      <div class="bs-handle"></div>
+      <div class="bs-title">おすすめルート<span>（安全重視）</span></div>
+      <div class="stats-row">
+        <div class="stat"><div class="stat-lbl">距離</div><div class="stat-val"><span id="bs-dist">5.2</span><span class="stat-unit">km</span></div></div>
+        <div class="stat"><div class="stat-lbl">時間</div><div class="stat-val"><span id="bs-mins">20</span><span class="stat-unit">分</span></div></div>
+        <div class="stat"><div class="stat-lbl">安全度</div><div class="stat-badge">🛡️ 高</div></div>
+      </div>
+      <div class="warn-row">
+        <div class="warn-chip">⚠️ 狭い道あり</div>
+        <div class="warn-chip">🚗 交通量多い区間</div>
+        <div class="warn-chip">🚲 自転車通行可</div>
+      </div>
+      <button class="start-btn" onclick="goTo('screen-routes')">
+        <span>📍</span><div><div>このルートで案内開始</div><div class="start-btn-sub">タップしやすい大きなボタン</div></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- Screen: Input -->
+  <div class="screen" id="screen-input">
+    <div class="nav-header">
+      <button class="back-btn" onclick="goBack()">←</button>
+      <span class="nav-title">ルートを検索</span>
+    </div>
+    <div class="input-body">
+      <div class="input-card">
+        <div class="input-label">出発地</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="mobile-input-start" class="input-field" type="text" placeholder="現在地（空欄でGPS使用）" style="flex:1;">
+          <button onclick="useGPS('mobile-input-start')" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:var(--blue);border:none;color:#fff;font-size:16px;cursor:pointer;" title="GPS取得">📍</button>
+        </div>
+      </div>
+      <div class="input-card">
+        <div class="input-label">目的地</div>
+        <input id="mobile-input-goal" class="input-field" type="text" placeholder="例：柏駅、麗澤大学" onkeydown="if(event.key==='Enter')mobileSearch();">
+      </div>
+      <div class="input-card" style="background:rgba(26,122,60,.05);border:1px solid rgba(26,122,60,.15);">
+        <div class="input-label" style="color:var(--green);">よく使うルート</div>
+        <div class="history-item" onclick="document.getElementById('mobile-input-goal').value='麗澤大学';"><div class="history-icon">🕐</div><div><div class="history-name">麗澤大学</div><div class="history-meta">タップして入力</div></div></div>
+        <div class="history-item" onclick="document.getElementById('mobile-input-goal').value='柏駅';"><div class="history-icon">⭐</div><div><div class="history-name">柏駅</div><div class="history-meta">タップして入力</div></div></div>
+        <div class="history-item" onclick="document.getElementById('mobile-input-goal').value='柏の葉キャンパス駅';"><div class="history-icon">🕐</div><div><div class="history-name">柏の葉キャンパス駅</div><div class="history-meta">タップして入力</div></div></div>
+      </div>
+    </div>
+    <div style="padding:12px 14px 20px;">
+      <button id="mobile-search-btn" class="start-btn" onclick="mobileSearch()">
+        <span>🔍</span><div><div>ルートを検索</div><div class="start-btn-sub">現在地 → 目的地</div></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- Screen: Routes -->
+  <div class="screen" id="screen-routes">
+    <div class="nav-header">
+      <button class="back-btn" onclick="goBack()">←</button>
+      <span class="nav-title">ルートを選択</span>
+    </div>
+    <!-- ルートプレビュー地図 -->
+    <div style="position:relative;height:220px;flex-shrink:0;">
+      <div id="route-preview-map" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;"></div>
+      <div class="legend" style="z-index:20;bottom:8px;left:8px;">
+        <div class="legend-title">安全度</div>
+        <div class="legend-row"><div class="ldot" style="background:#2ecc71;"></div><span>高</span></div>
+        <div class="legend-row"><div class="ldot" style="background:#f39c12;"></div><span>中</span></div>
+        <div class="legend-row"><div class="ldot" style="background:#e74c3c;"></div><span>低</span></div>
+      </div>
+      <!-- 選択中ルート表示 -->
+      <div id="route-selected-label" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--green);color:#fff;padding:4px 14px;border-radius:999px;font-size:11px;font-weight:700;z-index:20;white-space:nowrap;">ルート A（安全重視）</div>
+    </div>
+    <div class="routes-list">
+      <div class="route-card selected" onclick="selectRoute(this,'A')">
+        <div class="route-card-hd"><span class="route-name">ルート A（安全重視）</span><span class="safety-badge sb-high">🛡️ 高</span></div>
+        <div class="route-meta"><span><strong><span id="rA-dist">5.2</span> km</strong></span><span><strong>約<span id="rA-mins">20</span>分</strong></span><span>坂道なし</span></div>
+        <div class="route-bar"><div style="width:70%;background:#2ecc71;"></div><div style="width:20%;background:#f39c12;"></div><div style="width:10%;background:#e74c3c;"></div></div>
+        <div class="route-tags"><span class="rtag">🚲 自転車通行可</span><span class="rtag">📏 道幅広め</span><span class="rtag">⚠️ 注意1箇所</span></div>
+      </div>
+      <div class="route-card" onclick="selectRoute(this,'B')">
+        <div class="route-card-hd"><span class="route-name">ルート B（距離重視）</span><span class="safety-badge sb-mid">⚡ 中</span></div>
+        <div class="route-meta"><span><strong><span id="rB-dist">3.8</span> km</strong></span><span><strong>約<span id="rB-mins">15</span>分</strong></span><span>緩やかな坂あり</span></div>
+        <div class="route-bar"><div style="width:40%;background:#2ecc71;"></div><div style="width:45%;background:#f39c12;"></div><div style="width:15%;background:#e74c3c;"></div></div>
+        <div class="route-tags"><span class="rtag">🚗 交通量多い区間</span><span class="rtag">⚠️ 注意3箇所</span></div>
+      </div>
+      <div class="route-card" onclick="selectRoute(this,'C')">
+        <div class="route-card-hd"><span class="route-name">ルート C（最短）</span><span class="safety-badge sb-low">⚠️ 低</span></div>
+        <div class="route-meta"><span><strong><span id="rC-dist">2.9</span> km</strong></span><span><strong>約<span id="rC-mins">11</span>分</strong></span><span>急坂あり</span></div>
+        <div class="route-bar"><div style="width:20%;background:#2ecc71;"></div><div style="width:30%;background:#f39c12;"></div><div style="width:50%;background:#e74c3c;"></div></div>
+        <div class="route-tags"><span class="rtag">⛰️ 急坂あり</span><span class="rtag">🛣️ 路面荒れ</span><span class="rtag">⚠️ 危険5箇所</span></div>
+      </div>
+    </div>
+    <button class="select-btn" onclick="goTo('screen-navi')">このルートで案内開始 →</button>
+  </div>
+
+  <!-- Screen: Navi -->
+  <div class="screen" id="screen-navi" style="background:#e8ece4;">
+    <div class="navi-hdr">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <svg width="20" height="20" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="rgba(255,255,255,.2)"/><path d="M60 10 C48 10 38 20 38 32 C38 46 60 66 60 66 C60 66 82 46 82 32 C82 20 72 10 60 10Z" fill="none" stroke="#fff" stroke-width="3"/><circle cx="38" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="82" cy="88" r="14" fill="none" stroke="#fff" stroke-width="2.5"/><line x1="38" y1="88" x2="55" y2="68" stroke="#fff" stroke-width="2.5"/><line x1="55" y1="68" x2="82" y2="88" stroke="#fff" stroke-width="2.5"/></svg>
+        <div><div class="navi-dir">↗️ 200m先を右折</div><div class="navi-sub-txt">○○通り → △△交差点</div></div>
+      </div>
+    </div>
+    <div class="map-area">
+      <div id="navi-leaflet-map" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;"></div>
+    </div>
+    <div class="navi-bottom">
+      <div class="navi-stats">
+        <div class="navi-stat"><div class="navi-lbl">残り距離</div><div class="navi-val">3.8<span class="navi-unit">km</span></div></div>
+        <div class="navi-stat"><div class="navi-lbl">残り時間</div><div class="navi-val">15<span class="navi-unit">分</span></div></div>
+        <div class="navi-stat"><div class="navi-lbl">到着予想</div><div class="navi-val" style="font-size:17px;">14:32</div></div>
+      </div>
+      <button class="end-btn" onclick="goTo('screen-map')">🏁 案内を終了</button>
+    </div>
+  </div>
+
+  <!-- Screen: Detail -->
+  <div class="screen" id="screen-detail" style="background:#fff;">
+    <div class="nav-header">
+      <button class="back-btn" onclick="goBack()">←</button>
+      <span class="nav-title">道路詳細・危険情報</span>
+    </div>
+    <div class="detail-list">
+      <div class="detail-item"><div class="d-icon di-red">⚠️</div><div><div class="d-title">狭い道あり（道幅 1.5m）</div><div class="d-sub">○○通り 交差点付近 · 報告3件</div></div></div>
+      <div class="detail-item"><div class="d-icon di-yellow">🚧</div><div><div class="d-title">工事中（通行注意）</div><div class="d-sub">△△交差点 · 2025年7月まで</div></div></div>
+      <div class="detail-item"><div class="d-icon di-blue">🚶</div><div><div class="d-title">歩行者多い区間</div><div class="d-sub">駅前エリア · 8〜9時 / 17〜19時</div></div></div>
+      <div class="detail-item"><div class="d-icon di-red">⛰️</div><div><div class="d-title">急な上り坂（勾配 8%）</div><div class="d-sub">□□坂 · 約200m</div></div></div>
+      <div class="detail-item"><div class="d-icon di-yellow">🚗</div><div><div class="d-title">交通量が多い区間</div><div class="d-sub">幹線道路区間 · 朝夕ラッシュ時</div></div></div>
+      <div style="background:var(--gray1);border-radius:12px;padding:14px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:9px;">👥 ユーザー口コミ</div>
+        <div style="font-size:12px;color:var(--gray3);line-height:1.8;">「駅前の歩道が狭くて自転車が走りにくい」<br>「○○通りは朝の交通量が多くて怖い」<br>「裏道を使うと坂が少なくておすすめ」</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /mobile-root -->
+
+<script>
+  // ===== STATE =====
+  const CENTER = [35.8536, 139.9731];
+  const ZOOM   = 14;
+  let maps = {};
+  let startLatLng = null;
+  let goalLatLng  = null;
+  let startMarker = null, goalMarker = null;
+  let routeLayer  = null;
+  let currentLocation = null;
+  let routeData = { A: null, B: null, C: null };
+  let selectedRoute = 'A';
+  let previewLayer = null;
+  let pcPreviewLayer = null;
+
+  // ===== ICON =====
+  function makeIcon(emoji, bg) {
+    return L.divIcon({
+      html:`<div style="width:34px;height:34px;border-radius:50%;background:${bg};border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.25);">${emoji}</div>`,
+      iconSize:[34,34], iconAnchor:[17,17], className:''
+    });
+  }
+  function makeDangerIcon(emoji) {
+    return L.divIcon({
+      html:`<div style="width:32px;height:32px;border-radius:50%;background:#fff;border:2px solid #ddd;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 6px rgba(0,0,0,.2);">${emoji}</div>`,
+      iconSize:[32,32], iconAnchor:[16,16], className:''
+    });
+  }
+
+  // ===== NOMINATIM 住所検索 =====
+  async function geocode(query) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&accept-language=ja`;
+    const res = await fetch(url, {headers:{'User-Agent':'SAFLEN-App/1.0'}});
+    const data = await res.json();
+    if (!data.length) return null;
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name };
+  }
+
+  // ===== OSRM ルート取得 =====
+  async function getRoute(from, to) {
+    const url = `https://router.project-osrm.org/route/v1/cycling/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code !== 'Ok') return null;
+    const route = data.routes[0];
+    const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+    const dist   = (route.distance / 1000).toFixed(1);
+    const mins   = Math.round(route.duration / 60);
+    return { coords, dist, mins };
+  }
+
+  // ===== ルート描画 =====
+  function drawRoute(map, coords) {
+    if (routeLayer) { try { map.removeLayer(routeLayer); } catch(e){} }
+    const group = L.layerGroup();
+    drawRouteOnGroup(group, coords);
+    group.addTo(map);
+    routeLayer = group;
+    map.fitBounds(L.latLngBounds(coords), {padding:[40,40]});
+  }
+
+  // ===== GPS現在地取得 =====
+  function getGPS(cb) {
+    if (!navigator.geolocation) { cb(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => cb({lat:p.coords.latitude, lng:p.coords.longitude}),
+      () => cb(null),
+      {timeout:8000}
+    );
+  }
+
+  // ===== 地図初期化 =====
+  function buildMap(id, zoom) {
+    const map = L.map(id,{center:CENTER,zoom:zoom||ZOOM,zoomControl:false,attributionControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:19
+    }).addTo(map);
+    // デフォルト危険マーカー
+    const DANGERS = [
+      {latlng:[35.8565,139.9712], emoji:'⚠️', label:'狭い道あり'},
+      {latlng:[35.8536,139.9733], emoji:'🚧', label:'工事中'},
+      {latlng:[35.8495,139.9773], emoji:'⛰️', label:'急な坂'},
+    ];
+    DANGERS.forEach(d=>L.marker(d.latlng,{icon:makeDangerIcon(d.emoji)}).bindPopup(`<b>${d.label}</b>`).addTo(map));
+    L.control.zoom({position:'bottomright'}).addTo(map);
+    return map;
+  }
+
+  function invalidateMaps() {
+    Object.values(maps).forEach(m=>{try{m.invalidateSize();}catch(e){}});
+  }
+
+  // ===== ルート検索 実行 =====
+  async function searchRoute() {
+    // PC/モバイル両方の入力欄を参照（入力があった方を優先）
+    const startInput = (
+      document.getElementById('pc-input-start')?.value ||
+      document.getElementById('input-start')?.value || ''
+    ).trim();
+    const goalInput = (
+      document.getElementById('pc-input-goal')?.value ||
+      document.getElementById('input-goal')?.value || ''
+    ).trim();
+
+    if (!goalInput) { alert('目的地を入力してください'); return; }
+
+    // ローディング表示
+    setSearchLoading(true);
+
+    try {
+      // 現在地
+      let from;
+      if (!startInput || startInput === '現在地') {
+        from = await new Promise(res => getGPS(p => res(p)));
+        if (!from) {
+          // GPS失敗 → デフォルト（麗澤大学）
+          from = { lat: 35.8536, lng: 139.9731, name: '現在地（麗澤大学付近）' };
+        } else {
+          from.name = '現在地';
+        }
+      } else {
+        from = await geocode(startInput);
+        if (!from) { alert(`「${startInput}」が見つかりませんでした`); setSearchLoading(false); return; }
+      }
+
+      // 目的地
+      const to = await geocode(goalInput);
+      if (!to) { alert(`「${goalInput}」が見つかりませんでした`); setSearchLoading(false); return; }
+
+      startLatLng = from;
+      goalLatLng  = to;
+
+      // 3ルート分のルートを取得（A=安全重視, B=距離重視, C=最短）
+      // OSRMはバイク(cycling)モードで取得、A/B/Cはウェイポイントをわずかにずらして差別化
+      const routeA = await getRoute(from, to);
+      // B: 中間地点を少し東にずらす
+      const midB = { lat:(from.lat+to.lat)/2, lng:(from.lng+to.lng)/2 + 0.005 };
+      const routeB = await getRouteMid(from, midB, to);
+      // C: 中間地点を少し西にずらす
+      const midC = { lat:(from.lat+to.lat)/2, lng:(from.lng+to.lng)/2 - 0.004 };
+      const routeC = await getRouteMid(from, midC, to);
+
+      routeData.A = routeA;
+      routeData.B = routeB || routeA;
+      routeData.C = routeC || routeA;
+
+      // メイン地図・ナビ地図にルートA描画
+      ['mobile','pc','navi'].forEach(key => {
+        const map = maps[key];
+        if (!map) return;
+        if (startMarker) try{map.removeLayer(startMarker);}catch(e){}
+        if (goalMarker)  try{map.removeLayer(goalMarker);}catch(e){}
+        startMarker = L.marker([from.lat,from.lng],{icon:makeIcon('🚲','#2980b9')}).bindPopup(`<b>現在地</b>`).addTo(map);
+        goalMarker  = L.marker([to.lat,to.lng],{icon:makeIcon('📍','#e74c3c')}).bindPopup(`<b>目的地</b>`).addTo(map);
+        if (routeA) drawRoute(map, routeA.coords);
+      });
+
+      // プレビュー地図にもルートA描画
+      selectedRoute = 'A';
+      showPreviewRoute('A');
+
+      // ボトムシート更新
+      if (routeA) {
+        updateBottomSheet(routeA.dist, routeA.mins);
+        updateRouteCards(routeA.dist, routeA.mins);
+        updateSearchBarText(from.name, to.name);
+      }
+
+      setSearchLoading(false);
+
+      // PC → ルートタブへ / モバイル → マップ画面へ
+      if (window.innerWidth >= 768) {
+        pcTab('pc-routes');
+      } else {
+        goTo('screen-map');
+      }
+
+    } catch(e) {
+      console.error(e);
+      alert('ルート検索に失敗しました。再度お試しください。');
+      setSearchLoading(false);
+    }
+  }
+
+  function setSearchLoading(on) {
+    ['search-btn','pc-search-btn','mobile-search-btn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.disabled = on;
+      if (id === 'mobile-search-btn') return; // モバイルはmobileSearch側で管理
+      el.textContent = on ? '🔍 検索中...' : '🔍 検索';
+    });
+  }
+
+  function updateBottomSheet(dist, mins) {
+    const dEl = document.getElementById('bs-dist');
+    const mEl = document.getElementById('bs-mins');
+    if (dEl) dEl.textContent = dist;
+    if (mEl) mEl.textContent = mins;
+  }
+
+  function updateRouteCards(dist, mins) {
+    // ルートA（安全重視）= +30%距離 +50%時間
+    const aD = (parseFloat(dist)*1.3).toFixed(1);
+    const aM = Math.round(mins*1.5);
+    // ルートB（距離重視）= ほぼそのまま
+    const bD = dist;
+    const bM = mins;
+    // ルートC（最短）= -20%
+    const cD = (parseFloat(dist)*0.8).toFixed(1);
+    const cM = Math.round(mins*0.75);
+
+    const els = {
+      'rA-dist':aD,'rA-mins':aM,
+      'rB-dist':bD,'rB-mins':bM,
+      'rC-dist':cD,'rC-mins':cM,
+    };
+    Object.entries(els).forEach(([id,v])=>{
+      const el = document.getElementById(id);
+      if (el) el.textContent = v;
+    });
+  }
+
+  function updateSearchBarText(startName, goalName) {
+    const sShort = startName.length > 10 ? startName.slice(0,10)+'…' : startName;
+    const gShort = goalName.length > 10  ? goalName.slice(0,10)+'…'  : goalName;
+    document.querySelectorAll('.s-text-start').forEach(el => el.textContent = sShort);
+    document.querySelectorAll('.s-text-goal').forEach(el => el.textContent = gShort);
+  }
+
+  // ===== GPS現在地ボタン =====
+  function useGPS(inputId) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.value = '取得中...';
+    el.disabled = true;
+    getGPS(p => {
+      el.disabled = false;
+      if (p) {
+        el.value = `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+        // マップを現在地に移動
+        Object.values(maps).forEach(m => m.setView([p.lat,p.lng], 15));
+      } else {
+        el.value = '';
+        el.placeholder = 'GPS取得失敗（住所で入力）';
+      }
+    });
+  }
+
+  // ===== 地図全体初期化 =====
+  function initAllMaps() {
+    if (maps.mobile) return;
+    if (document.getElementById('mobile-leaflet-map'))     maps.mobile   = buildMap('mobile-leaflet-map');
+    if (document.getElementById('pc-leaflet-map'))         maps.pc       = buildMap('pc-leaflet-map');
+    if (document.getElementById('navi-leaflet-map'))       maps.navi     = buildMap('navi-leaflet-map', 16);
+    if (document.getElementById('route-preview-map'))      maps.preview  = buildMap('route-preview-map', 13);
+    if (document.getElementById('pc-route-preview-map'))   maps.pcpreview= buildMap('pc-route-preview-map', 13);
+    // 起動時にGPS取得試行
+    getGPS(p => {
+      if (!p) return;
+      currentLocation = p;
+      Object.values(maps).forEach(m => m.setView([p.lat,p.lng], 15));
+      document.querySelectorAll('.s-text-start').forEach(el => el.textContent = '現在地（GPS）');
+    });
+  }
+
+  // ===== SPLASH =====
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      document.getElementById('splash').classList.add('hide');
+      setTimeout(() => {
+        document.getElementById('splash').style.display = 'none';
+        initAllMaps();
+      }, 500);
+    }, 1800);
+  });
+
+  // ===== OSRM 経由地点ありルート =====
+  async function getRouteMid(from, mid, to) {
+    try {
+      const url = `https://router.project-osrm.org/route/v1/cycling/${from.lng},${from.lat};${mid.lng},${mid.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.code !== 'Ok') return null;
+      const route = data.routes[0];
+      return {
+        coords: route.geometry.coordinates.map(c=>[c[1],c[0]]),
+        dist: (route.distance/1000).toFixed(1),
+        mins: Math.round(route.duration/60)
+      };
+    } catch(e) { return null; }
+  }
+
+  // ===== プレビュー地図にルートを表示 =====
+  function showPreviewRoute(key) {
+    const data = routeData[key];
+    if (!data) return;
+
+    const labels = { A:'ルート A（安全重視）', B:'ルート B（距離重視）', C:'ルート C（最短）' };
+    const labelEl    = document.getElementById('route-selected-label');
+    const pcLabelEl  = document.getElementById('pc-route-selected-label');
+    if (labelEl)   labelEl.textContent   = labels[key];
+    if (pcLabelEl) pcLabelEl.textContent = labels[key];
+
+    // プレビュー地図（モバイル）
+    if (maps.preview) {
+      if (previewLayer) try{maps.preview.removeLayer(previewLayer);}catch(e){}
+      const g = L.layerGroup();
+      drawRouteOnGroup(g, data.coords);
+      L.marker(data.coords[0], {icon:makeIcon('🚲','#2980b9')}).addTo(g);
+      L.marker(data.coords[data.coords.length-1], {icon:makeIcon('📍','#e74c3c')}).addTo(g);
+      g.addTo(maps.preview);
+      previewLayer = g;
+      maps.preview.fitBounds(L.latLngBounds(data.coords), {padding:[20,20]});
+    }
+
+    // プレビュー地図（PC）
+    if (maps.pcpreview) {
+      if (pcPreviewLayer) try{maps.pcpreview.removeLayer(pcPreviewLayer);}catch(e){}
+      const g2 = L.layerGroup();
+      drawRouteOnGroup(g2, data.coords);
+      L.marker(data.coords[0], {icon:makeIcon('🚲','#2980b9')}).addTo(g2);
+      L.marker(data.coords[data.coords.length-1], {icon:makeIcon('📍','#e74c3c')}).addTo(g2);
+      g2.addTo(maps.pcpreview);
+      pcPreviewLayer = g2;
+      maps.pcpreview.fitBounds(L.latLngBounds(data.coords), {padding:[20,20]});
+    }
+  }
+
+  // ルートをLayerGroupに描画（3色分け）
+  function drawRouteOnGroup(group, coords) {
+    const n = coords.length;
+    const seg1 = coords.slice(0, Math.floor(n*0.45));
+    const seg2 = coords.slice(Math.floor(n*0.45), Math.floor(n*0.72));
+    const seg3 = coords.slice(Math.floor(n*0.72));
+    [[seg1,'#2ecc71'],[seg2,'#f39c12'],[seg3,'#e74c3c']].forEach(([s,c])=>{
+      if (s.length < 2) return;
+      L.polyline(s,{color:'#fff',weight:10,opacity:.4}).addTo(group);
+      L.polyline(s,{color:c,weight:6,opacity:.95}).addTo(group);
+    });
+  }
+
+  // ===== MOBILE NAV =====
+  const navHistory = ['screen-map'];
+  function goTo(id) {
+    const curr = document.querySelector('.mobile-root .screen.active');
+    const next = document.getElementById(id);
+    if (!next || curr === next) return;
+    curr.classList.remove('active');
+    next.classList.add('active');
+    if (navHistory[navHistory.length-1] !== id) navHistory.push(id);
+    setTimeout(invalidateMaps, 300);
+  }
+  function goBack() {
+    if (navHistory.length <= 1) return;
+    navHistory.pop();
+    const prev = navHistory[navHistory.length-1];
+    const curr = document.querySelector('.mobile-root .screen.active');
+    const target = document.getElementById(prev);
+    if (!target) return;
+    curr.classList.remove('active');
+    target.style.transform = 'translateX(-30px)';
+    target.classList.add('active');
+    setTimeout(() => { target.style.transform = ''; }, 10);
+    setTimeout(invalidateMaps, 300);
+  }
+
+  function selectRoute(el, key) {
+    document.querySelectorAll('#screen-routes .route-card').forEach(c=>c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedRoute = key;
+    showPreviewRoute(key);
+    // メイン地図にも反映
+    const data = routeData[key];
+    if (data && maps.mobile) drawRoute(maps.mobile, data.coords);
+  }
+
+  // ===== PC NAV =====
+  function pcTab(id) {
+    document.querySelectorAll('.pc-sub').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.querySelectorAll('.pc-tab').forEach((t,i)=>{
+      t.classList.toggle('active', ['pc-home','pc-routes','pc-navi','pc-detail'][i] === id);
+    });
+    setTimeout(invalidateMaps, 300);
+  }
+  function selectRoutePC(el, key) {
+    document.querySelectorAll('#pc-routes .route-card').forEach(c=>c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedRoute = key;
+    showPreviewRoute(key);
+    // PC右側の地図にも反映
+    const data = routeData[key];
+    if (data && maps.pc) drawRoute(maps.pc, data.coords);
+  }
+
+  // ===== CHIP TOGGLE =====
+  function toggleChip(el) {
+    el.classList.toggle('chip-on');
+    el.classList.toggle('chip-off');
+  }
+
+  // ===== MOBILE SEARCH =====
+  async function mobileSearch() {
+    const startInput = (document.getElementById('mobile-input-start').value || '').trim();
+    const goalInput  = (document.getElementById('mobile-input-goal').value  || '').trim();
+
+    // メインのinput-start/goalにも反映してsearchRouteを流用
+    document.getElementById('input-start').value = startInput;
+    document.getElementById('input-goal').value  = goalInput;
+
+    const btn = document.getElementById('mobile-search-btn');
+    if (btn) { btn.textContent = '🔍 検索中...'; btn.disabled = true; }
+    await searchRoute();
+    if (btn) { btn.textContent = '🔍 ルートを検索'; btn.disabled = false; }
+  }
+
+  // ===== Enterキー検索 =====
+  document.addEventListener('DOMContentLoaded', () => {
+    ['input-goal','pc-input-goal','mobile-input-goal'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          if (id === 'mobile-input-goal') mobileSearch();
+          else searchRoute();
+        }
+      });
+    });
+  });
+
+  // ===== PWA =====
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+</script>
+</body>
+</html>
